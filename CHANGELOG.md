@@ -8,7 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [2.1.54] - 2026-05-11
+
+### Fixed
+- **Seamless account switch stability**: Resolved "Plugin switch account timeout" errors (12000ms limit) by decoupling the heavy post-switch UI refresh (Credits/Quota) from the primary response path. Feedbacks are now delivered in milliseconds, while data synchronization happens asynchronously in the background.
+- **Optimistic token verification**: Reduced sequential blocking by introducing a 30s optimistic token buffer during switches, ensuring rapid execution unless the token is actually expired.
+
+### Changed
+- **Increased timeouts**: Aligned and extended system-wide dual-channel timeouts (Extension: 30s, Host: 20s) to guarantee reliability in high-latency network environments.
 
 ## [2.1.53] - 2026-05-11
 
