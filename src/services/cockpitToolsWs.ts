@@ -4,13 +4,11 @@
  */
 
 import { EventEmitter } from 'events';
+import * as childProcess from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { logger } from '../shared/log_service';
-
-/** 共享配置目录 */
-const SHARED_DIR = path.join(os.homedir(), '.antigravity_cockpit');
+import { getCockpitToolsSharedDir, isAntigravityWslRemote } from '../shared/antigravity_paths';
 
 /** 服务配置文件 */
 const SERVER_CONFIG_FILE = 'server.json';
@@ -37,7 +35,7 @@ export interface ServerConfig {
  */
 export function readServerConfig(): ServerConfig | null {
     try {
-        const configPath = path.join(SHARED_DIR, SERVER_CONFIG_FILE);
+        const configPath = path.join(getCockpitToolsSharedDir(), SERVER_CONFIG_FILE);
         if (fs.existsSync(configPath)) {
             const content = fs.readFileSync(configPath, 'utf-8');
             return JSON.parse(content) as ServerConfig;
@@ -48,19 +46,66 @@ export function readServerConfig(): ServerConfig | null {
     return null;
 }
 
+function resolveWslWindowsHost(): string {
+    try {
+        const defaultRoute = childProcess.execFileSync(
+            'ip',
+            ['route', 'show', 'default'],
+            { encoding: 'utf8' },
+        ).trim();
+        const gatewayMatch = defaultRoute.match(/\bdefault\s+via\s+([^\s]+)\b/i);
+        if (gatewayMatch?.[1]) {
+            return gatewayMatch[1];
+        }
+    } catch (error) {
+        logger.debug('[WS] 读取 WSL 默认网关失败，将尝试 resolv.conf:', error);
+    }
+
+    try {
+        const content = fs.readFileSync('/etc/resolv.conf', 'utf-8');
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+            const match = line.match(/^\s*nameserver\s+([^\s#]+)\s*$/i);
+            if (match?.[1]) {
+                return match[1];
+            }
+        }
+    } catch (error) {
+        logger.debug('[WS] 读取 /etc/resolv.conf 失败，将回退 localhost:', error);
+    }
+    return '127.0.0.1';
+}
+
+function resolveWsHost(): string {
+    if (isAntigravityWslRemote()) {
+        const wslHost = resolveWslWindowsHost();
+        logger.debug(`[WS] WSL host resolved to ${wslHost}`);
+        return wslHost;
+    }
+    return '127.0.0.1';
+}
+
+function formatWsHost(host: string): string {
+    if (host.includes(':') && !host.startsWith('[') && !host.endsWith(']')) {
+        return `[${host}]`;
+    }
+    return host;
+}
+
 /**
  * 读取服务配置文件获取 WebSocket 端口
  * @returns WebSocket URL
  */
 function getWsUrl(): string {
+    const host = formatWsHost(resolveWsHost());
     const config = readServerConfig();
     if (config && config.ws_port > 0) {
-        logger.debug(`[WS] 从配置文件读取端口: ${config.ws_port}`);
-        return `ws://127.0.0.1:${config.ws_port}`;
+        logger.debug(`[WS] 从配置文件读取端口: ${config.ws_port}, host=${host}`);
+        return `ws://${host}:${config.ws_port}`;
     }
     
     // 回退到默认端口
-    return `ws://127.0.0.1:${DEFAULT_WS_PORT}`;
+    return `ws://${host}:${DEFAULT_WS_PORT}`;
 }
 
 // ============================================================================

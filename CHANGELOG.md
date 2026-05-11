@@ -10,11 +10,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## [2.1.43] - 2026-05-11
+## [2.1.53] - 2026-05-11
 
 ### Fixed
 - **Quota grouping auto-heal**: Added a background auto-fill mechanism that automatically assigns orphan models (like Gemini Flash) into their respective family groups (Gemini Pro, Claude, etc.) if they were missing from the user's mapping configuration. This ensures models are never hidden in grouped mode due to legacy configuration gaps.
 
+## [2.1.52] - 2026-04-19
+
+### Added
+- **AI Credits surfaced across UI**: Added a unified `Credits` display in Status Bar, Account Tree account nodes, and Accounts Overview (card/table/compact views), so available AI credits are visible without opening details.
+- **AI Credits in quota snapshot model**: Added `availableAICredits` in quota snapshots, sourced from `loadCodeAssist` (`paidTier.availableCredits`) and passed through HUD/account overview payloads.
+- **In-app announcement update**: Added a new popup announcement for the author's self-hosted account/redeem-code shop channel.
+
+### Improved
+- **Authorized quota cache replay keeps credits value**: When authorized quota falls back to cached model data, the extension now reuses the last known available AI credits to avoid showing `--` unexpectedly.
+- **Cached API snapshot enrichment**: Using cached API responses now attempts a lightweight credits refresh for the selected account, keeping credits display fresher.
+- **Status bar sync on account cache updates**: Status bar now listens to account cache update events and syncs display when current-account cached snapshot is refreshed.
+
+### Fixed
+- **Credits i18n key synchronization**: Synced the new `dashboard.availableAiCredits` key to all supported locale files to prevent fallback-to-key text in non-Chinese/English locales.
+
+## [2.1.43] - 2026-04-11
+
+### Fixed
+- **WSL shared directory resolution for Cockpit Tools**: When the extension runs in WSL, it now resolves Cockpit Tools shared files from the Windows user profile (`%USERPROFILE%/.antigravity_cockpit`) instead of the Linux home directory, so `accounts.json` and `server.json` are read from the actual desktop-side location.
+- **WSL WebSocket host resolution for Cockpit Tools**: The desktop WebSocket target now prefers the WSL default gateway, falls back to `/etc/resolv.conf` when needed, and safely formats IPv6 hosts, improving connectivity to the Windows-side Cockpit Tools service.
+- **WSL runtime detection and desktop launch path**: WSL detection no longer depends only on a remote name flag; the extension also detects WSL from runtime signals and uses the Windows deep-link launch path in WSL sessions, improving Cockpit Tools startup reliability.
 
 ## [2.1.42] - 2026-04-04
 

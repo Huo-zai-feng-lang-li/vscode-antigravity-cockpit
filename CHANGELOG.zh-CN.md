@@ -10,11 +10,32 @@
 
 ## [未发布]
 
-## [2.1.43] - 2026-05-11
+## [2.1.53] - 2026-05-11
 
 ### 修复
 - **分组配额静默自愈**：新增后台自动补全机制，当检测到 Gemini Flash 等模型存在但未被纳入对应的家族分组（如 Gemini Pro、Claude 等）时，系统会自动将其归位。这彻底解决了因历史配置遗漏导致模型在分组模式下被意外隐藏的问题。
 
+## [2.1.52] - 2026-04-19
+
+### 新增
+- **AI 积分多入口展示**：状态栏、账号树账号子节点、账号总览（卡片/表格/紧凑视图）均新增统一 `Credits` 展示，无需进入详情即可查看可用 AI 积分。
+- **配额快照新增 AI 积分字段**：在配额快照中新增 `availableAICredits`，来源于 `loadCodeAssist` 的 `paidTier.availableCredits`，并贯通到 HUD 与账号总览数据。
+- **站内公告内容更新**：新增一条作者自营账号/兑换码渠道的弹窗公告。
+
+### 优化
+- **授权配额缓存回放保留积分值**：当授权配额请求失败并回放缓存模型时，会复用最近一次可用 AI 积分，避免界面意外显示 `--`。
+- **缓存响应补齐积分刷新**：命中 API 缓存时会尝试轻量刷新当前账号的积分数据，提升 Credits 展示实时性。
+- **状态栏随账号缓存更新同步**：状态栏现在会监听账号缓存更新事件，在当前账号缓存刷新后同步显示。
+
+### 修复
+- **Credits 国际化 key 补齐**：将新增的 `dashboard.availableAiCredits` key 同步到全部支持语言文件，避免非中英文环境回退显示 key 本身。
+
+## [2.1.43] - 2026-04-11
+
+### 修复
+- **WSL 下 Cockpit Tools 共享目录解析**：当扩展运行在 WSL 中时，Cockpit Tools 共享文件现在会从 Windows 用户目录（`%USERPROFILE%/.antigravity_cockpit`）解析，而不是 Linux Home 目录，`accounts.json` 与 `server.json` 会读取桌面端实际使用的位置。
+- **WSL 下 Cockpit Tools WebSocket 主机解析**：桌面端 WebSocket 连接目标现在会优先使用 WSL 默认网关，必要时回退到 `/etc/resolv.conf`，并正确处理 IPv6 主机地址，提升连接 Windows 侧 Cockpit Tools 服务的稳定性。
+- **WSL 运行时识别与桌面端拉起路径**：WSL 检测不再只依赖 remoteName 标记；扩展会结合运行时信号识别 WSL，并在 WSL 会话中走 Windows 深链拉起路径，提升 Cockpit Tools 启动成功率。
 
 ## [2.1.42] - 2026-04-04
 
