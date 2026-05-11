@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2.1.43] - 2026-05-11
+
+### Fixed
+- **Quota grouping auto-heal**: Added a background auto-fill mechanism that automatically assigns orphan models (like Gemini Flash) into their respective family groups (Gemini Pro, Claude, etc.) if they were missing from the user's mapping configuration. This ensures models are never hidden in grouped mode due to legacy configuration gaps.
+
+
 ## [2.1.42] - 2026-04-04
 
 ### Fixed

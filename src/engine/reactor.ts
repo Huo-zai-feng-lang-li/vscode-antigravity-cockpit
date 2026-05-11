@@ -978,6 +978,53 @@ export class ReactorCore {
         logger.info(`[AutoGroup] Auto-assigned ${changedCount} new model(s) based on api-cache diff`);
     }
 
+    /**
+     * 补全遗漏模型：将有已知 family 但不在 groupMappings 中的模型
+     * 自动分配到对应的现有分组中。
+     */
+    private async autoFillMissingFamilyModels(
+        models: ModelQuotaInfo[],
+    ): Promise<void> {
+        const config = configService.getConfig();
+        const existingMappings = config.groupMappings || {};
+        if (Object.keys(existingMappings).length === 0) {
+            return;
+        }
+
+        const familyGroupMap = this.buildAutoFamilyGroupMap(existingMappings);
+        if (Object.keys(familyGroupMap).length === 0) {
+            return;
+        }
+
+        let changedCount = 0;
+        const nextMappings = { ...existingMappings };
+        for (const model of models) {
+            if (!model.modelId || nextMappings[model.modelId]) {
+                continue;
+            }
+            const family = this.resolveAutoGroupFamily(model.modelId, model.label);
+            if (!family) {
+                continue;
+            }
+            const targetGroupId = familyGroupMap[family];
+            if (!targetGroupId) {
+                continue;
+            }
+            nextMappings[model.modelId] = targetGroupId;
+            changedCount++;
+            logger.info(
+                `[AutoGroup] Auto-filled missing model "${model.label}" (${model.modelId}) into group "${targetGroupId}" (family=${family})`,
+            );
+        }
+
+        if (changedCount === 0) {
+            return;
+        }
+
+        await configService.updateGroupMappings(nextMappings);
+        logger.info(`[AutoGroup] Auto-filled ${changedCount} missing model(s) into existing groups`);
+    }
+
     private async fetchAuthorizedQuotaModels(
         accessToken: string,
         projectId?: string,
@@ -1035,6 +1082,11 @@ export class ReactorCore {
                 await this.autoAssignNewModelsToExistingGroups(previousCache, models);
             } catch (error) {
                 logger.warn(`[AutoGroup] Failed to auto-assign new models: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            try {
+                await this.autoFillMissingFamilyModels(models);
+            } catch (error) {
+                logger.warn(`[AutoGroup] Failed to auto-fill missing models: ${error instanceof Error ? error.message : String(error)}`);
             }
             try {
                 await writeQuotaApiCache({
