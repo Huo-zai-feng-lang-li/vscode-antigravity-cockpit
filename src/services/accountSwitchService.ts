@@ -8,7 +8,7 @@ import { cockpitToolsWs } from './cockpitToolsWs';
 
 const ACCOUNT_SWITCH_MODE_STATE_KEY = 'accountSwitchMode';
 const DEFAULT_WS_WAIT_MS = 5000;
-const DEFAULT_SEAMLESS_TIMEOUT_MS = 8000;
+const DEFAULT_SEAMLESS_TIMEOUT_MS = 20000;
 
 export type AccountSwitchMode = 'default' | 'seamless';
 export type AccountSwitchModeInput = AccountSwitchMode | 'auto';
@@ -206,7 +206,8 @@ class AccountSwitchService {
                 `[AccountSwitchService] Seamless target resolved: requested=${requestedEmail}, resolved=${resolvedEmail}, activeBefore=${activeBefore ?? 'none'}`,
             );
 
-            const tokenStatus = await oauthService.getAccessTokenStatusForAccount(resolvedEmail);
+            // 为无感切号使用极短的 buffer（30秒），只要 Token 还没过期就先用着，避免阻塞在网络刷新上
+            const tokenStatus = await oauthService.getAccessTokenStatusForAccount(resolvedEmail, { bufferTime: 30 * 1000 });
             if (tokenStatus.state !== 'ok' || !tokenStatus.token) {
                 const tokenMessage = this.buildSeamlessTokenErrorMessage(tokenStatus.state, tokenStatus.error);
                 logger.warn(
@@ -282,7 +283,7 @@ class AccountSwitchService {
                 try {
                     const appliedToken = await this.withTimeout(
                         Promise.resolve(tokenApi.getOAuthTokenInfo()),
-                        DEFAULT_SEAMLESS_TIMEOUT_MS,
+                        3000, // 仅分配 3 秒进行回读确认
                         'getOAuthTokenInfo',
                     );
                     logger.info(

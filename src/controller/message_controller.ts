@@ -120,11 +120,12 @@ export class MessageController {
             }
 
             if (this.refreshService) {
-                await this.refreshService.refresh({
+                // HUD 刷新和 Quota 同步异步执行，不阻塞切号响应回传
+                this.refreshService.refresh({
                     skipSync: true,
                     skipQuotaRefresh: true,
                     reason: requestedMode === 'auto' ? 'manualAccountSwitch' : `manualAccountSwitch:${requestedMode}`,
-                });
+                }).catch(err => logger.warn(`[MsgCtrl] Post-switch refresh failed: ${err}`));
             }
             this.reactor.syncTelemetry();
             logger.info(

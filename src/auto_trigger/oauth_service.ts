@@ -308,20 +308,19 @@ class OAuthService {
     /**
      * 获取指定账号的 access_token 状态
      */
-    async getAccessTokenStatusForAccount(email: string): Promise<AccessTokenResult> {
+    async getAccessTokenStatusForAccount(email: string, options?: { bufferTime?: number }): Promise<AccessTokenResult> {
         const credential = await credentialStorage.getCredentialForAccount(email);
         if (!credential) {
             return { state: 'missing' };
         }
 
-        // 检查是否过期（提前 5 分钟刷新）
         const expiresAt = new Date(credential.expiresAt);
         const now = new Date();
-        const bufferTime = 5 * 60 * 1000; // 5 分钟
+        const bufferTime = options?.bufferTime ?? (5 * 60 * 1000); // 默认 5 分钟
         const isExpired = expiresAt.getTime() <= now.getTime();
 
         if (expiresAt.getTime() - now.getTime() < bufferTime) {
-            logger.info(`[OAuthService] Token expiring soon for ${email}, refreshing...`);
+            logger.info(`[OAuthService] Token expiring soon for ${email} (buffer=${bufferTime}ms), refreshing...`);
             const refreshed = await this.refreshAccessTokenDetailedForAccount(email);
             if (refreshed.state === 'missing' && isExpired) {
                 return { state: 'expired', error: 'Access token expired' };

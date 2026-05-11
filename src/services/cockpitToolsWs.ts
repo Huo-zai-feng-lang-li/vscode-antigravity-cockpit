@@ -19,7 +19,7 @@ const DEFAULT_WS_PORT = 19528;
 const RECONNECT_INTERVAL = 5000; // 5秒重连间隔
 const RECONNECT_INTERVAL_MAX = 30000; // 最大重连间隔 30 秒
 const PING_INTERVAL = 30000; // 30秒心跳间隔
-const REQUEST_TIMEOUT = 10000; // 请求超时 10 秒
+const REQUEST_TIMEOUT = 30000; // 请求超时从 10 秒增加到 30 秒
 
 /** 服务配置结构（与 Rust 端保持一致） */
 export interface ServerConfig {
