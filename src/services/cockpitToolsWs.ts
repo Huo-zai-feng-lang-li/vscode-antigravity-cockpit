@@ -20,6 +20,7 @@ const RECONNECT_INTERVAL = 5000; // 5秒重连间隔
 const RECONNECT_INTERVAL_MAX = 30000; // 最大重连间隔 30 秒
 const PING_INTERVAL = 30000; // 30秒心跳间隔
 const REQUEST_TIMEOUT = 30000; // 请求超时从 10 秒增加到 30 秒
+const CONNECT_TIMEOUT = 5000; // 避免冷启动时永久停留 CONNECTING
 
 /** 服务配置结构（与 Rust 端保持一致） */
 export interface ServerConfig {
@@ -221,10 +222,11 @@ export interface AccountsWithTokensResponse {
 // WebSocket Client
 // ============================================================================
 
-class CockpitToolsWsClient extends EventEmitter {
+export class CockpitToolsWsClient extends EventEmitter {
     private ws: WebSocket | null = null;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private pingTimer: NodeJS.Timeout | null = null;
+    private connectWatchdog: NodeJS.Timeout | null = null;
     private _isConnected = false;
     private _version: string | null = null;
     private _shouldReconnect = true;
@@ -259,7 +261,7 @@ class CockpitToolsWsClient extends EventEmitter {
      * 连接到 Cockpit Tools
      */
     connect(): void {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             return;
         }
 
@@ -531,6 +533,9 @@ class CockpitToolsWsClient extends EventEmitter {
     // ========================================================================
 
     private doConnect(): void {
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
         try {
             // 每次重连都读取最新配置，确保端口变化后能正确连接
             const wsUrl = getWsUrl();
@@ -542,9 +547,15 @@ class CockpitToolsWsClient extends EventEmitter {
             this.lastWsUrl = wsUrl;
             
             logger.info(`[WS] 正在连接 ${wsUrl}... (尝试次数: ${this.reconnectFailCount + 1})`);
-            this.ws = new WebSocket(wsUrl);
+            const socket = new WebSocket(wsUrl);
+            this.ws = socket;
+            this.startConnectWatchdog(socket);
 
-            this.ws.onopen = () => {
+            socket.onopen = () => {
+                if (this.ws !== socket) {
+                    return;
+                }
+                this.stopConnectWatchdog();
                 logger.info('[WS] 连接成功');
                 this._isConnected = true;
                 this.reconnectFailCount = 0; // 重置失败计数
@@ -552,7 +563,12 @@ class CockpitToolsWsClient extends EventEmitter {
                 this.startPing();
             };
 
-            this.ws.onclose = (event) => {
+            socket.onclose = (event) => {
+                if (this.ws !== socket) {
+                    return;
+                }
+                this.stopConnectWatchdog();
+                this.ws = null;
                 logger.info(`[WS] 连接关闭: ${event.code}`);
                 this._isConnected = false;
                 this._version = null;
@@ -563,11 +579,17 @@ class CockpitToolsWsClient extends EventEmitter {
                 this.scheduleReconnect();
             };
 
-            this.ws.onerror = (error) => {
+            socket.onerror = (error) => {
+                if (this.ws !== socket) {
+                    return;
+                }
                 logger.debug('[WS] 连接错误:', error);
             };
 
-            this.ws.onmessage = (event) => {
+            socket.onmessage = (event) => {
+                if (this.ws !== socket) {
+                    return;
+                }
                 this.handleMessage(event.data);
             };
         } catch (error) {
@@ -681,6 +703,43 @@ class CockpitToolsWsClient extends EventEmitter {
         this.pendingRequests.clear();
     }
 
+    private startConnectWatchdog(socket: WebSocket): void {
+        this.stopConnectWatchdog();
+        this.connectWatchdog = setTimeout(() => {
+            this.connectWatchdog = null;
+            if (this.ws !== socket || socket.readyState !== WebSocket.CONNECTING) {
+                return;
+            }
+
+            logger.warn('[WS] 连接握手超时，准备重连');
+            this.detachSocket(socket);
+            try {
+                socket.close();
+            } catch (error) {
+                logger.debug('[WS] 关闭超时连接失败:', error);
+            }
+            this.ws = null;
+            this._isConnected = false;
+            this._version = null;
+            this.reconnectFailCount++;
+            this.scheduleReconnect();
+        }, CONNECT_TIMEOUT);
+    }
+
+    private stopConnectWatchdog(): void {
+        if (this.connectWatchdog) {
+            clearTimeout(this.connectWatchdog);
+            this.connectWatchdog = null;
+        }
+    }
+
+    private detachSocket(socket: WebSocket): void {
+        socket.onopen = null;
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+    }
+
     private scheduleReconnect(): void {
         if (!this._shouldReconnect) {
             return;
@@ -719,6 +778,7 @@ class CockpitToolsWsClient extends EventEmitter {
     }
 
     private cleanup(): void {
+        this.stopConnectWatchdog();
         this.stopPing();
         this.rejectAllPendingRequests('连接已关闭');
 
@@ -728,10 +788,7 @@ class CockpitToolsWsClient extends EventEmitter {
         }
 
         if (this.ws) {
-            this.ws.onopen = null;
-            this.ws.onclose = null;
-            this.ws.onerror = null;
-            this.ws.onmessage = null;
+            this.detachSocket(this.ws);
             this.ws.close();
             this.ws = null;
         }

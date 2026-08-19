@@ -38,6 +38,7 @@ import {
 } from './services/cockpitToolsWs';
 import { cockpitToolsSyncEvents } from './services/cockpitToolsSync';
 import { accountSwitchService, AccountSwitchMode, AccountSwitchModeInput } from './services/accountSwitchService';
+import { rehydrateStartupAccount } from './services/startupAccountRehydration';
 
 // 全局模块实例
 let hunter: ProcessHunter;
@@ -168,7 +169,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             return;
         }
         const cache = accountsRefreshService.getQuotaCache(currentEmail);
-        if (!cache || cache.loading || cache.error || !cache.snapshot?.isConnected) {
+        if (!cache || cache.error || !cache.snapshot) {
             return;
         }
         try {
@@ -199,12 +200,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 初始化自动触发控制器
     autoTriggerController.initialize(context);
 
-    // 启动时自动同步到客户端当前登录账户
-    // 必须同步等待完成，避免与后续操作产生竞态条件
+    // 每次启动都重新灌入宿主令牌。仅比较 activeEmail 会在重启时跳过宿主同步，
+    // 表现为账号可见但聊天发送链路没有可用凭据。
     try {
-        const syncResult = await autoTriggerController.syncToClientAccountOnStartup();
-        if (syncResult === 'switched') {
-            logger.info('[Startup] Auto-switched to client account');
+        const accountResult = await rehydrateStartupAccount({
+            syncLocalAccount: () => autoTriggerController.syncToClientAccountOnStartup(),
+            getActiveAccount: () => credentialStorage.getActiveAccount(),
+            rehydrateHostToken: email => accountSwitchService.switchAccount(email, { requestedMode: 'seamless' }),
+        });
+        if (accountResult.state === 'rehydrated') {
+            logger.info(`[Startup] Host token rehydrated after local sync (${accountResult.syncResult})`);
+        } else if (accountResult.state === 'failed') {
+            logger.warn(`[Startup] Host token rehydration failed: ${accountResult.message}`);
+        } else {
+            logger.debug(`[Startup] Host token rehydration skipped (${accountResult.syncResult})`);
         }
     } catch (err) {
         logger.debug(`[Startup] Account sync skipped: ${err instanceof Error ? err.message : err}`);

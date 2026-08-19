@@ -15,6 +15,10 @@ export interface RefreshOptions {
     forceRefresh?: boolean;
     /** 刷新原因（用于日志） */
     reason?: string;
+    /** 并发请求限制 (默认 4) */
+    concurrency?: number;
+    /** 单账号刷新完成回调 (流式通知) */
+    onProgress?: (email: string, result: RefreshResult) => void;
 }
 
 export interface RefreshResult {
@@ -33,10 +37,13 @@ export interface RefreshResult {
  * 负责统一管理配额刷新，实现跨工作区/IDE 的文件缓存共享
  */
 export class QuotaRefreshManager {
+    private static readonly CREDITS_CACHE_TTL_MS = 10 * 60 * 1000;
     /** 当前正在刷新的账号（防止并发） */
     private refreshingAccounts = new Set<string>();
     /** 最近一次网络刷新时间（仅在成功网络请求后更新） */
     private lastNetworkRefreshAt = new Map<string, number>();
+    /** credits 与配额模型分开缓存，避免缓存命中时仍重复请求网络 */
+    private creditsCache = new Map<string, { value: number; updatedAt: number }>();
 
     constructor(private readonly reactor: ReactorCore) {}
 
@@ -113,25 +120,44 @@ export class QuotaRefreshManager {
     }
 
     /**
-     * 批量刷新多个账号（走缓存）
+     * 批量并发刷新多个账号（支持进度回调与并发池控制）
      * @param emails 账号邮箱列表
      * @param options 刷新选项
      * @returns 各账号的刷新结果
      */
     async refreshAccounts(emails: string[], options?: RefreshOptions): Promise<Map<string, RefreshResult>> {
         const results = new Map<string, RefreshResult>();
-        const reason = options?.reason ?? 'batch';
-
-        for (const email of emails) {
-            const result = await this.refreshAccount(email, { 
-                ...options, 
-                reason,
-                // 批量刷新默认走缓存，除非明确指定 forceRefresh
-                forceRefresh: options?.forceRefresh ?? false,
-            });
-            results.set(email, result);
+        if (emails.length === 0) {
+            return results;
         }
 
+        const reason = options?.reason ?? 'batch';
+        const concurrency = Math.max(1, options?.concurrency ?? 4);
+        const forceRefresh = options?.forceRefresh ?? false;
+
+        let index = 0;
+        const workers = Array.from({ length: Math.min(concurrency, emails.length) }, async () => {
+            while (index < emails.length) {
+                const currentIndex = index++;
+                const email = emails[currentIndex];
+                const result = await this.refreshAccount(email, { 
+                    ...options, 
+                    reason,
+                    forceRefresh,
+                });
+                results.set(email, result);
+
+                if (options?.onProgress) {
+                    try {
+                        options.onProgress(email, result);
+                    } catch (err) {
+                        logger.warn(`[QuotaRefresh] Error in onProgress callback for ${email}: ${err}`);
+                    }
+                }
+            }
+        });
+
+        await Promise.all(workers);
         return results;
     }
 
@@ -183,15 +209,28 @@ export class QuotaRefreshManager {
         const age = getApiCacheAge(cached);
         logger.info(`[QuotaRefresh] Using api cache for ${email} (age: ${Math.round(age / 1000)}s, reason: ${reason})`);
         const snapshot = this.reactor.buildAuthorizedSnapshotFromResponse(cached!.payload, cached!.updatedAt);
+        await this.enrichCredits(email, snapshot);
+        return snapshot;
+    }
+
+    private async enrichCredits(email: string, snapshot: QuotaSnapshot): Promise<void> {
+        const cached = this.creditsCache.get(email);
+        if (cached && Date.now() - cached.updatedAt < QuotaRefreshManager.CREDITS_CACHE_TTL_MS) {
+            snapshot.availableAICredits = cached.value;
+            return;
+        }
+
         try {
             const credits = await this.reactor.fetchAvailableAICreditsForAccount(email);
-            if (Number.isFinite(credits)) {
-                snapshot.availableAICredits = Math.max(0, Number(credits));
+            if (!Number.isFinite(credits)) {
+                return;
             }
+            const value = Math.max(0, Number(credits));
+            this.creditsCache.set(email, { value, updatedAt: Date.now() });
+            snapshot.availableAICredits = value;
         } catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
             logger.warn(`[QuotaRefresh] Failed to enrich credits for ${email}: ${err.message}`);
         }
-        return snapshot;
     }
 }

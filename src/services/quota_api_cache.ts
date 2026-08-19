@@ -62,8 +62,8 @@ export async function writeQuotaApiCache(record: QuotaApiCacheRecord): Promise<v
     await fs.rename(tempPath, filePath);
 }
 
-/** 缓存过期时间（毫秒）：60秒 */
-export const CACHE_TTL_MS = 60 * 1000;
+/** 缓存过期时间（毫秒）：10分钟，覆盖默认自动刷新周期，避免后台网络抖动 */
+export const CACHE_TTL_MS = 10 * 60 * 1000;
 
 export function isApiCacheValid(record: QuotaApiCacheRecord | null, ttlMs: number = CACHE_TTL_MS): boolean {
     if (!record || !record.updatedAt) {

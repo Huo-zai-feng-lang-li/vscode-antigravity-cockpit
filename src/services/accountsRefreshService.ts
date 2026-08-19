@@ -217,34 +217,46 @@ export class AccountsRefreshService {
                         emails.push(email);
                     }
                     
-                    // 使用 QuotaRefreshManager 批量刷新（走文件缓存）
-                    const results = await this.quotaRefreshManager.refreshAccounts(emails, { reason: reason });
-                    
-                    // 将结果同步到内存缓存
-                    for (const [email, result] of results) {
-                        if (result.success && result.snapshot) {
-                            const cache: AccountQuotaCache = {
-                                snapshot: result.snapshot,
-                                fetchedAt: Date.now(),
-                                loading: false,
-                                error: undefined,
-                            };
-                            this.quotaCache.set(email, cache);
-                            await this.clearAccountForbiddenState(email);
-                        } else if (!result.success) {
-                            if (result.error && this.isForbiddenError(result.error)) {
-                                await this.setAccountForbiddenState(email);
-                                if (allowForbidden) {
-                                    this.setErrorCache(email, result.error || '403 Forbidden');
-                                } else {
-                                    this.setForbiddenCache(email);
-                                }
-                            } else {
-                                this.setErrorCache(email, result.error || 'Unknown error');
-                            }
+                    // 优先刷新当前活跃账号，让状态栏能在第一毫秒更新
+                    const currentEmail = this.getCurrentEmail();
+                    if (currentEmail) {
+                        const currentIdx = emails.indexOf(currentEmail);
+                        if (currentIdx > 0) {
+                            emails.splice(currentIdx, 1);
+                            emails.unshift(currentEmail);
                         }
                     }
-                    this.emitUpdate();
+
+                    // 使用 QuotaRefreshManager 批量并发刷新，并通过 onProgress 流式触发 UI 变更
+                    await this.quotaRefreshManager.refreshAccounts(emails, {
+                        reason: reason,
+                        concurrency: 4,
+                        onProgress: (email, result) => {
+                            if (result.success && result.snapshot) {
+                                const cache: AccountQuotaCache = {
+                                    snapshot: result.snapshot,
+                                    fetchedAt: Date.now(),
+                                    loading: false,
+                                    error: undefined,
+                                };
+                                this.quotaCache.set(email, cache);
+                                void this.clearAccountForbiddenState(email);
+                            } else if (!result.success) {
+                                if (result.error && this.isForbiddenError(result.error)) {
+                                    void this.setAccountForbiddenState(email);
+                                    if (allowForbidden) {
+                                        this.setErrorCache(email, result.error || '403 Forbidden');
+                                    } else {
+                                        this.setForbiddenCache(email);
+                                    }
+                                } else {
+                                    this.setErrorCache(email, result.error || 'Unknown error');
+                                }
+                            }
+                            // 每刷新完一个账号，即刻广播通知 (当前账号完成后状态栏零延迟触发)
+                            this.emitUpdate();
+                        },
+                    });
                 } else {
                     logger.info('[AccountsRefresh] 跳过配额刷新 (skipQuotaRefresh=true)');
                 }
@@ -298,39 +310,49 @@ export class AccountsRefreshService {
                 emails.push(email);
             }
 
-            const results = await this.quotaRefreshManager.refreshAccounts(emails, { reason: 'autoRefresh' });
-            
-            // 将结果同步到内存缓存
-            for (const [email, result] of results) {
-                if (result.success && result.snapshot) {
-                    const cache: AccountQuotaCache = {
-                        snapshot: result.snapshot,
-                        fetchedAt: Date.now(),
-                        loading: false,
-                        error: undefined,
-                    };
-                    this.quotaCache.set(email, cache);
-                    await this.clearAccountForbiddenState(email);
-                } else if (!result.success) {
-                    if (result.error && this.isForbiddenError(result.error)) {
-                        await this.setAccountForbiddenState(email);
-                        this.setForbiddenCache(email);
-                    } else {
-                        this.setErrorCache(email, result.error || 'Unknown error');
-                    }
-                    
-                    // 检查是否为授权失败
-                    if (result.error && this.isAuthError(result.error)) {
-                        const account = this.accounts.get(email);
-                        if (account) {
-                            account.isInvalid = true;
-                            account.invalidReason = t('accountsRefresh.authExpired');
-                        }
-                    }
+            // 优先刷新当前活跃账号，让状态栏零延迟更新
+            const currentEmail = this.getCurrentEmail();
+            if (currentEmail) {
+                const currentIdx = emails.indexOf(currentEmail);
+                if (currentIdx > 0) {
+                    emails.splice(currentIdx, 1);
+                    emails.unshift(currentEmail);
                 }
             }
-            
-            this.emitUpdate();
+
+            await this.quotaRefreshManager.refreshAccounts(emails, {
+                reason: 'autoRefresh',
+                concurrency: 4,
+                onProgress: (email, result) => {
+                    if (result.success && result.snapshot) {
+                        const cache: AccountQuotaCache = {
+                            snapshot: result.snapshot,
+                            fetchedAt: Date.now(),
+                            loading: false,
+                            error: undefined,
+                        };
+                        this.quotaCache.set(email, cache);
+                        void this.clearAccountForbiddenState(email);
+                    } else if (!result.success) {
+                        if (result.error && this.isForbiddenError(result.error)) {
+                            void this.setAccountForbiddenState(email);
+                            this.setForbiddenCache(email);
+                        } else {
+                            this.setErrorCache(email, result.error || 'Unknown error');
+                        }
+                        
+                        // 检查是否为授权失败
+                        if (result.error && this.isAuthError(result.error)) {
+                            const account = this.accounts.get(email);
+                            if (account) {
+                                account.isInvalid = true;
+                                account.invalidReason = t('accountsRefresh.authExpired');
+                            }
+                        }
+                    }
+                    this.emitUpdate();
+                },
+            });
         } finally {
             this.isRefreshingQuotas = false;
         }
